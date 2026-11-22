@@ -67,7 +67,7 @@ def donnees_exemple():
 
 if uploaded_file is not None:
     try:
-        data_bacs = pd.read_csv(uploaded_file)
+         data_bacs = pd.read_csv(uploaded_file, sep=None, engine='python')
         colonnes_requises = {"nom", "tonnage", "lat", "lon"}
         if not colonnes_requises.issubset(data_bacs.columns):
             st.error(f"Le CSV doit contenir les colonnes : {colonnes_requises}")
