@@ -10,12 +10,12 @@ from ortools.constraint_solver import pywrapcp
 # CONFIGURATION DE LA PAGE
 # =========================================================
 st.set_page_config(
-    page_title="Optimisation Collecte Déchets",
+    page_title="Optimisation Collecte Déchets - Casablanca",
     page_icon="🚛",
     layout="wide"
 )
 
-st.title("🚛 Optimisation de l'itinéraire de collecte des déchets")
+st.title("🚛 Optimisation de la collecte des déchets")
 st.markdown("Cette application calcule l'itinéraire optimal d'un camion de collecte en fonction de la **capacité maximale du camion** et du **tonnage de chaque bac**.")
 
 # =========================================================
@@ -35,53 +35,59 @@ with st.sidebar:
     )
     vitesse_moyenne = st.number_input(
         "Vitesse moyenne (km/h)",
-        min_value=10, max_value=80, value=30, step=5
+        min_value=10, max_value=80, value=25, step=5
     )
 
-    st.header("📍 Coordonnées du dépôt")
-    depot_lat = st.number_input("Latitude dépôt", value=48.856600, format="%.6f")
-    depot_lon = st.number_input("Longitude dépôt", value=2.352200, format="%.6f")
+    st.header("📍 Coordonnées du dépôt (Casablanca)")
+    depot_lat = st.number_input("Latitude dépôt", value=33.5950, format="%.6f")
+    depot_lon = st.number_input("Longitude dépôt", value=-7.6180, format="%.6f")
 
     st.header("📂 Données des bacs")
     uploaded_file = st.file_uploader(
-        "Importer un fichier CSV (colonnes : nom, tonnage, lat, lon)",
-        type="csv"
+        "Importer un fichier CSV ou Excel",
+        type=["csv", "xlsx", "xls"]
     )
 
     st.markdown("---")
-    st.markdown("**Exemple de CSV attendu :**")
-    st.code("nom,tonnage,lat,lon\nBac A,1.2,48.85,2.35\nBac B,2.5,48.86,2.36", language="text")
-
+    st.markdown("**Exemple de format attendu :**")
+    st.code("nom,tonnage,lat,lon\nMaarif,2.5,33.5869,-7.6320", language="text")
 
 # =========================================================
-# CHARGEMENT DES DONNÉES
+# CHARGEMENT DES DONNÉES (CSV OU EXCEL)
 # =========================================================
 @st.cache_data
 def donnees_exemple():
     return pd.DataFrame({
-        "nom": ["Bac A", "Bac B", "Bac C", "Bac D", "Bac E", "Bac F", "Bac G"],
-        "tonnage": [1.2, 2.5, 0.8, 3.0, 1.5, 2.2, 1.8],
-        "lat": [48.8500, 48.8600, 48.8400, 48.8700, 48.8300, 48.8550, 48.8650],
-        "lon": [2.3500, 2.3600, 2.3400, 2.3700, 2.3300, 2.3450, 2.3650]
+        "nom": ["Maarif", "Ain Diab", "Sidi Moumen", "Hay Hassani", "Sidi Belyout", "Anfa"],
+        "tonnage": [2.5, 1.8, 3.2, 2.1, 1.5, 2.8],
+        "lat": [33.5869, 33.5917, 33.6072, 33.5678, 33.5950, 33.6028],
+        "lon": [-7.6320, -7.6780, -7.5380, -7.6650, -7.6180, -7.6520]
     })
 
 if uploaded_file is not None:
     try:
-         data_bacs = pd.read_csv(uploaded_file, sep=None, engine='python')
+        # Détection automatique du type de fichier
+        if uploaded_file.name.endswith('.csv'):
+            # sep=None permet de détecter automatiquement la virgule ou le point-virgule
+            data_bacs = pd.read_csv(uploaded_file, sep=None, engine='python')
+        else:
+            # Lecture des fichiers Excel
+            data_bacs = pd.read_excel(uploaded_file)
+            
         colonnes_requises = {"nom", "tonnage", "lat", "lon"}
         if not colonnes_requises.issubset(data_bacs.columns):
-            st.error(f"Le CSV doit contenir les colonnes : {colonnes_requises}")
+            st.error(f"Le fichier doit contenir les colonnes : {colonnes_requises}. Colonnes trouvées : {list(data_bacs.columns)}")
             st.stop()
-        st.success(f"✅ {len(data_bacs)} bacs importés depuis le CSV.")
+        st.success(f"✅ {len(data_bacs)} bacs importés avec succès.")
     except Exception as e:
         st.error(f"Erreur de lecture du fichier : {e}")
         st.stop()
 else:
     data_bacs = donnees_exemple()
-    st.info("ℹ️ Aucun fichier importé — utilisation des données d'exemple.")
+    st.info("ℹ️ Aucun fichier importé — utilisation des données d'exemple (Casablanca).")
 
 # =========================================================
-# AFFICHAGE DES DONNÉES ET MÉTRIQUES INITIALES
+# AFFICHAGE DES DONNÉES
 # =========================================================
 with st.expander("📋 Voir la liste des bacs", expanded=False):
     st.dataframe(data_bacs, use_container_width=True)
@@ -90,13 +96,11 @@ with st.expander("📋 Voir la liste des bacs", expanded=False):
     nb_voyages_min = int(np.ceil(total_tonnage / capacite_camion))
     st.metric("Nombre minimal de voyages requis", nb_voyages_min)
 
-
 # =========================================================
 # FONCTIONS UTILITAIRES
 # =========================================================
 def calculer_matrice_distances(lats, lons):
-    """Calcule une matrice de distances en mètres (formule de Haversine)."""
-    R = 6371000  # rayon Terre en mètres
+    R = 6371000
     n = len(lats)
     matrice = np.zeros((n, n))
     for i in range(n):
@@ -112,11 +116,9 @@ def calculer_matrice_distances(lats, lons):
             matrice[i][j] = R * c
     return matrice.astype(int)
 
-
 def resoudre_cvrp(distance_matrix, demandes_kg, capacite_kg):
-    """Résout le problème du voyageur de commerce avec contraintes de capacité (CVRP)."""
     n = len(distance_matrix)
-    manager = pywrapcp.RoutingIndexManager(n, 1, 0)  # 1 véhicule, dépôt = index 0
+    manager = pywrapcp.RoutingIndexManager(n, 1, 0)
     routing = pywrapcp.RoutingModel(manager)
 
     def distance_callback(from_index, to_index):
@@ -129,14 +131,7 @@ def resoudre_cvrp(distance_matrix, demandes_kg, capacite_kg):
         return demandes_kg[manager.IndexToNode(from_index)]
 
     demande_idx = routing.RegisterUnaryTransitCallback(demande_callback)
-
-    routing.AddDimensionWithVehicleCapacity(
-        demande_idx,
-        0,
-        [capacite_kg],
-        True,
-        "Capacity"
-    )
+    routing.AddDimensionWithVehicleCapacity(demande_idx, 0, [capacite_kg], True, "Capacity")
 
     params = pywrapcp.DefaultRoutingSearchParameters()
     params.first_solution_strategy = routing_enums_pb2.FirstSolutionStrategy.PATH_CHEAPEST_ARC
@@ -146,13 +141,10 @@ def resoudre_cvrp(distance_matrix, demandes_kg, capacite_kg):
     solution = routing.SolveWithParameters(params)
     return solution, manager, routing
 
-
 # =========================================================
-# BOUTON DE CALCUL ET STOCKAGE EN MÉMOIRE
+# BOUTON DE CALCUL
 # =========================================================
 if st.button("🚀 Calculer l'itinéraire optimal", type="primary", use_container_width=True):
-    
-    # Préparation : dépôt (index 0) + bacs
     df_complet = pd.concat([
         pd.DataFrame({"nom": ["🏭 Dépôt"], "tonnage": [0.0], "lat": [depot_lat], "lon": [depot_lon]}),
         data_bacs.reset_index(drop=True)
@@ -165,7 +157,6 @@ if st.button("🚀 Calculer l'itinéraire optimal", type="primary", use_containe
 
     with st.spinner("Calcul de la meilleure tournée en cours..."):
         dist_matrix = calculer_matrice_distances(lats, lons)
-
         try:
             solution, manager, routing = resoudre_cvrp(dist_matrix, demandes_kg, capacite_kg)
         except Exception as e:
@@ -173,10 +164,9 @@ if st.button("🚀 Calculer l'itinéraire optimal", type="primary", use_containe
             st.stop()
 
     if solution is None:
-        st.error("❌ Aucune solution trouvée. Vérifiez que la capacité du camion est suffisante.")
+        st.error("❌ Aucune solution trouvée. Vérifiez la capacité du camion.")
         st.session_state.resultats = None
     else:
-        # Extraction de la tournée
         index = routing.Start(0)
         ordre_visite = []
         distance_totale = 0
@@ -201,7 +191,6 @@ if st.button("🚀 Calculer l'itinéraire optimal", type="primary", use_containe
             distance_totale += routing.GetArcCostForVehicle(index, next_index, 0)
             index = next_index
 
-        # Retour au dépôt
         ordre_visite.append({
             "Étape": len(ordre_visite),
             "Lieu": df_complet.iloc[0]["nom"],
@@ -211,7 +200,6 @@ if st.button("🚀 Calculer l'itinéraire optimal", type="primary", use_containe
             "Lon": df_complet.iloc[0]["lon"]
         })
 
-        # Sauvegarde de TOUS les résultats dans la mémoire de session
         st.session_state.resultats = {
             "ordre_visite": ordre_visite,
             "distance_totale": distance_totale,
@@ -223,14 +211,13 @@ if st.button("🚀 Calculer l'itinéraire optimal", type="primary", use_containe
         }
 
 # =========================================================
-# AFFICHAGE DES RÉSULTATS (En dehors du bouton)
+# AFFICHAGE DES RÉSULTATS
 # =========================================================
 if st.session_state.resultats is not None:
     res = st.session_state.resultats
     
     st.header("📊 Résultats de l'optimisation")
     
-    # Résumé
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("Distance totale", f"{res['distance_totale']/1000:.2f} km")
     col2.metric("Tonnage collecté", f"{res['tonnage_total']:.2f} T")
@@ -241,42 +228,24 @@ if st.session_state.resultats is not None:
     taux_remplissage = (res['tonnage_total'] / res['capacite_camion']) * 100
     st.progress(min(taux_remplissage / 100, 1.0), text=f"Taux de remplissage : {taux_remplissage:.1f}%")
 
-    # Tableau de la tournée
     st.subheader("🗺️ Ordre de visite")
     df_route = pd.DataFrame(res['ordre_visite'])
     st.dataframe(df_route, use_container_width=True)
 
-    # Carte interactive
     st.subheader("📍 Carte de l'itinéraire")
-    centre_lat = np.mean(res['lats'])
-    centre_lon = np.mean(res['lons'])
-    
-    m = folium.Map(location=[centre_lat, centre_lon], zoom_start=13, tiles="OpenStreetMap")
+    m = folium.Map(location=[np.mean(res['lats']), np.mean(res['lons'])], zoom_start=12)
 
-    # Marqueurs
     for i, row in df_route.iterrows():
-        if "Dépôt" in row["Lieu"]:
-            couleur, icone = "red", "home"
-        else:
-            couleur, icone = "green", "trash"
+        couleur, icone = ("red", "home") if "Dépôt" in row["Lieu"] else ("green", "trash")
         folium.Marker(
             location=[row["Lat"], row["Lon"]],
             popup=f"{row['Lieu']} — {row['Tonnage (T)']} T",
-            tooltip=f"Étape {row['Étape']} : {row['Lieu']}",
             icon=folium.Icon(color=couleur, icon=icone, prefix="fa")
         ).add_to(m)
 
-    # Tracé de l'itinéraire
     coords = [[r["Lat"], r["Lon"]] for r in res['ordre_visite']]
     folium.PolyLine(coords, color="blue", weight=4, opacity=0.8).add_to(m)
-
     st_folium(m, width=None, height=500, use_container_width=True)
 
-    # Téléchargement CSV
     csv_export = df_route[["Étape", "Lieu", "Tonnage (T)", "Charge cumulée (T)", "Lat", "Lon"]].to_csv(index=False).encode("utf-8")
-    st.download_button(
-        "⬇️ Télécharger l'itinéraire (CSV)",
-        csv_export,
-        "itineraire_collecte.csv",
-        "text/csv"
-    )
+    st.download_button("⬇️ Télécharger l'itinéraire (CSV)", csv_export, "itineraire_collecte.csv", "text/csv")
